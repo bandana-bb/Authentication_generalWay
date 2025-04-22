@@ -1,10 +1,15 @@
 package dev.bandana.user_auth_service.services;
 
+import com.fasterxml.jackson.core.JsonProcessingException;
+import com.fasterxml.jackson.databind.ObjectMapper;
+import dev.bandana.user_auth_service.dtos.SendEmailDto;
 import dev.bandana.user_auth_service.models.Token;
 import dev.bandana.user_auth_service.models.User;
 import dev.bandana.user_auth_service.repositores.TokenRepository;
 import dev.bandana.user_auth_service.repositores.UserRepository;
 import org.apache.commons.lang3.RandomStringUtils;
+import org.apache.kafka.clients.producer.KafkaProducer;
+import org.springframework.kafka.core.KafkaTemplate;
 import org.springframework.security.crypto.bcrypt.BCryptPasswordEncoder;
 import org.springframework.stereotype.Service;
 
@@ -18,11 +23,18 @@ public class UserServiceImpl implements UserService {
     private final UserRepository userRepository;
     private final BCryptPasswordEncoder bCryptPasswordEncoder;
     private final TokenRepository tokenRepository;
+    private final ObjectMapper objectMapper;
 
-    public  UserServiceImpl(BCryptPasswordEncoder bCryptPasswordEncoder, UserRepository userRepository, TokenRepository tokenRepository) {
+    //1.key-->topic ,Value->event
+    private KafkaTemplate<String,String> kafkaTemplate;
+
+    public  UserServiceImpl(BCryptPasswordEncoder bCryptPasswordEncoder, UserRepository userRepository, TokenRepository tokenRepository, ObjectMapper objectMapper,
+                            KafkaTemplate<String,String> kafkaTemplate) {
         this.bCryptPasswordEncoder = bCryptPasswordEncoder;
         this.userRepository = userRepository;
         this.tokenRepository = tokenRepository;
+        this.objectMapper = objectMapper;
+        this.kafkaTemplate = kafkaTemplate;
     }
 
     @Override
@@ -71,6 +83,23 @@ public class UserServiceImpl implements UserService {
         user.setName(name);
         user.setEmail(email);
         user.setPassword(bCryptPasswordEncoder.encode(password));
+
+        //Pushing an event to kafka which userservice will read and send welcome email to
+        //the user .
+        SendEmailDto sendEmailDto=new SendEmailDto();
+        sendEmailDto.setSubject("Greetings for the day");
+        sendEmailDto.setBody("Welcome to Scaler classes");
+        sendEmailDto.setEmail(user.getEmail());
+
+        //push and event to kafka
+
+        try {
+            kafkaTemplate.send(
+                    "sendEmail",objectMapper.writeValueAsString(sendEmailDto)
+            );
+        } catch (JsonProcessingException e) {
+            throw new RuntimeException(e);
+        }
         return userRepository.save(user);
     }
 
